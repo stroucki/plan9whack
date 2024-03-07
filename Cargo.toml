@@ -3,6 +3,7 @@ name = "plan9whack"
 version = "0.1.0"
 edition = "2021"
 authors = ["Michael Stroucken <mxs@cmu.edu>"]
+repository = "https://github.com/stroucki/plan9whack/"
 description = "A port of the whack compression scheme from Plan9's venti"
 license = "MIT"
 keywords = ["compression", "plan9", "venti"]
