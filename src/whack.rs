@@ -1,5 +1,7 @@
+// Copyright 2024 by Michael Stroucken
 use crate::constants::*;
 
+/// Compression dictionary
 pub struct Whack {
     pub begin: u16,
     pub hash: [u16; 16384],
@@ -7,6 +9,7 @@ pub struct Whack {
     pub thwmaxcheck: u32,
 }
 
+/// Collect status from compression
 pub struct Stats {
     pub statbytes: usize,
     pub statoutbytes: usize,
@@ -17,11 +20,12 @@ pub struct Stats {
     pub statlenbits: usize,
 }
 
-pub struct DictLookup {
+struct DictLookup {
     pub len: u16,
     pub off: u16,
 }
 
+/// Create a compressor state object
 pub fn whackinit(level: u8) -> Whack {
     let mut thwmaxcheck;
     thwmaxcheck = (1) << level;
@@ -39,9 +43,7 @@ pub fn whackinit(level: u8) -> Whack {
     }
 }
 
-/*
-find a string in the dictionary
- */
+/// find a string in the dictionary
 fn whackmatch(
     b: &Whack,
     src: &[u8],
@@ -88,7 +90,11 @@ fn whackmatch(
          */
 
         t = s - off as usize;
-        if src[s] == src[t] && src[s + 1] == src[t + 1] && src[s + 2] == src[t + 2] && (bestlen == 0 || esrc - s > bestlen && src[s + bestlen] == src[t + bestlen]) {
+        if src[s] == src[t]
+            && src[s + 1] == src[t + 1]
+            && src[s + 2] == src[t + 2]
+            && (bestlen == 0 || esrc - s > bestlen && src[s + bestlen] == src[t + bestlen])
+        {
             t += 3;
             s += 3;
             while s < esrc {
@@ -133,17 +139,15 @@ fn hashit(c: usize) -> u16 {
     ((((c & 0xffffff) * 0x6b43a9b5) >> (32 - HASH_LOG)) as u32 & HASH_MASK) as u16
 }
 
-/*
- * lz77 compression with single lookup in a hash table for each block
- */
+/// lz77 compression with single lookup in a hash table for each block
 pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<Vec<u8>> {
     let mut s: usize;
     let mut ss: usize;
     let mut sss: usize;
-    
+
     let mut half: usize;
     let mut wdst: usize;
-    
+
     let mut cont: usize;
     let mut code: usize;
     let mut wbits: usize;
@@ -169,8 +173,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
     now = w.begin;
     s = 0;
 
-    cont =
-        (((src[s] as u32) << 16) | ((src[s + 1] as u32) << 8) | (src[s + 2] as u32)) as usize;
+    cont = (((src[s] as u32) << 16) | ((src[s + 1] as u32) << 8) | (src[s + 2] as u32)) as usize;
     let esrc: usize = s + n;
     half = s + (n >> 1);
     wnbits = 0;
@@ -345,6 +348,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
     Some(dst)
 }
 
+/// Compress a section of data
 pub fn whackblock(src: &[u8], ssize: usize) -> Option<Vec<u8>> {
     let mut stats = Stats {
         statbytes: 0,

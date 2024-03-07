@@ -1,3 +1,4 @@
+// Copyright 2024 by Michael Stroucken
 //pub const MAX_SEQ_START: u32 = 256;
 //pub const MAX_SEQ_MASK: u32 = 8;
 pub const MIN_DECODE: u32 = 8;

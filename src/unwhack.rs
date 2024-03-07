@@ -1,7 +1,10 @@
+// Copyright 2024 by Michael Stroucken
 use crate::constants::*;
 
+/// In original code, initialized error handling. Useless now.
 pub fn unwhackinit() {}
 
+/// uncompress a section of data
 pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
     let mut dst: Vec<u8> = Vec::with_capacity(ndst);
     let mut dpos = 0;

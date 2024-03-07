@@ -1,4 +1,16 @@
 #[cfg(test)]
+/// generate random data vector to see if compression bails
+pub fn random_data() -> String {
+    let mut random = String::from(
+        "PCqlI1VIpzyagtfxzFYoidhfHnAGA6dubI9j/ClS8nqj52vroaBmKDhuMBVT+gh6V0YFeUMLPAab
+xP/KsvLo1g==",
+    );
+    random.retain(|c| !c.is_whitespace());
+    random
+}
+
+#[cfg(test)]
+/// generate ground truth compressed data vector from large_uncompressed_data()
 pub fn large_compressed_data() -> String {
     let mut compressed = String::from(
         "OByN5jZXNzb3ISR0IBgCjsZTcZG9yX2lkgajsrc6tLcypLc6MrYJRjOB1EDMwtrS2PMGTYSjabzI
@@ -27,6 +39,7 @@ pub fn large_compressed_data() -> String {
 }
 
 #[cfg(test)]
+/// generate ground truth uncompressed data vector from large_compressed_data()
 pub fn large_uncompressed_data() -> String {
     let mut decompressed = String::from(
         "cHJvY2Vzc29yCTogMAp2ZW5kb3JfaWQJOiBHZW51aW5lSW50ZWwKY3B1IGZhbWlseQk6IDYKbW9k
