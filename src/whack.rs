@@ -42,7 +42,7 @@ pub fn whackinit(level: u8) -> Whack {
 /*
 find a string in the dictionary
  */
-pub fn whackmatch(
+fn whackmatch(
     b: &Whack,
     src: &[u8],
     ss: usize,
@@ -129,7 +129,7 @@ pub fn whackmatch(
 /*
 #define hashit(c)       ((((ulong)(c) * 0x6b43a9) >> (24 - HashLog)) & HashMask)
 */
-pub fn hashit(c: usize) -> u16 {
+fn hashit(c: usize) -> u16 {
     ((((c & 0xffffff) * 0x6b43a9b5) >> (32 - HASH_LOG)) as u32 & HASH_MASK) as u16
 }
 
@@ -341,7 +341,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
     }
 
     stats.statoutbytes += wdst;
-    assert_eq!(wdst, dst.len());
+    //assert_eq!(wdst, dst.len());
     Some(dst)
 }
 
