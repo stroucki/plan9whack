@@ -72,10 +72,10 @@ pub fn whackmatch(
     last = 0;
     then = b.hash[h as usize];
     loop {
-        if !(check > 0) {
+        if check == 0 {
             break;
         }
-        check = check - 1;
+        check -= 1;
 
         off = now - then;
         if off <= last || off > WHACK_MAX_OFF {
@@ -88,29 +88,27 @@ pub fn whackmatch(
          */
 
         t = s - off as usize;
-        if src[s] == src[t] && src[s + 1] == src[t + 1] && src[s + 2] == src[t + 2] {
-            if bestlen == 0 || esrc - s > bestlen && src[s + bestlen] == src[t + bestlen] {
-                t += 3;
-                s += 3;
-                while s < esrc {
-                    if src[s] != src[t] {
-                        break;
-                    }
-                    t += 1;
-                    s += 1;
+        if src[s] == src[t] && src[s + 1] == src[t + 1] && src[s + 2] == src[t + 2] && (bestlen == 0 || esrc - s > bestlen && src[s + bestlen] == src[t + bestlen]) {
+            t += 3;
+            s += 3;
+            while s < esrc {
+                if src[s] != src[t] {
+                    break;
                 }
-                if s - ss > bestlen {
-                    bestlen = s - ss;
-                    bestoff = off;
-                    if bestlen > b.thwmaxcheck as usize {
-                        break;
-                    }
+                t += 1;
+                s += 1;
+            }
+            if s - ss > bestlen {
+                bestlen = s - ss;
+                bestoff = off;
+                if bestlen > b.thwmaxcheck as usize {
+                    break;
                 }
             }
         }
         s = ss;
         last = off;
-        then = b.next[(then & WHACK_MAX_OFF - 1) as usize];
+        then = b.next[(then & (WHACK_MAX_OFF - 1)) as usize];
     }
 
     Some(DictLookup {
@@ -142,10 +140,10 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
     let mut s: usize;
     let mut ss: usize;
     let mut sss: usize;
-    let esrc: usize;
+    
     let mut half: usize;
     let mut wdst: usize;
-    let wdmax: usize;
+    
     let mut cont: usize;
     let mut code: usize;
     let mut wbits: usize;
@@ -167,13 +165,13 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
 
     let mut dst = Vec::with_capacity(n);
     wdst = 0;
-    wdmax = n;
+    let wdmax: usize = n;
     now = w.begin;
     s = 0;
 
     cont =
-        (((src[s + 0] as u32) << 16) | ((src[s + 1] as u32) << 8) | (src[s + 2] as u32)) as usize;
-    esrc = s + n;
+        (((src[s] as u32) << 16) | ((src[s + 1] as u32) << 8) | (src[s + 2] as u32)) as usize;
+    let esrc: usize = s + n;
     half = s + (n >> 1);
     wnbits = 0;
     wbits = 0;
@@ -186,7 +184,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
         h = hashit(cont);
 
         sss = s;
-        let wmr = whackmatch(w, &src, sss, esrc, h, now);
+        let wmr = whackmatch(w, src, sss, esrc, h, now);
         if wmr.is_some() {
             let foo = wmr.unwrap();
             (toff, len) = (foo.off, foo.len);
@@ -200,20 +198,20 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
                 w.begin = now;
                 return None;
             }
-            let value = (wbits >> wnbits - 8) as u8;
+            let value = (wbits >> (wnbits - 8)) as u8;
             dst.push(value);
             wdst += 1;
             wnbits -= 8;
         }
         if (len as usize) < MIN_MATCH {
             toff = src[s] as u16;
-            lithist = lithist << 1 | if toff < 32 || toff > 127 { 1 } else { 0 };
+            lithist = lithist << 1 | if !(32..=127).contains(&toff) { 1 } else { 0 };
 
             if lithist & 0x1e != 0 {
                 wbits = wbits << 9 | toff as usize;
                 wnbits += 9;
             } else if lithist & 1 != 0 {
-                toff = toff + 64 & 0xff;
+                toff = (toff + 64) & 0xff;
                 if toff < 96 {
                     wbits = wbits << 10 | toff as usize;
                     wnbits += 10;
@@ -239,7 +237,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
                 half = esrc;
             }
             if s + MIN_MATCH <= esrc {
-                w.next[(now & (WHACK_MAX_OFF - 1) as u16) as usize] = w.hash[h as usize];
+                w.next[(now & (WHACK_MAX_OFF - 1)) as usize] = w.hash[h as usize];
                 w.hash[h as usize] = now;
                 if s + MIN_MATCH < esrc {
                     cont = cont << 8 | src[s + MIN_MATCH] as usize;
@@ -279,7 +277,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
                         w.begin = now;
                         return None;
                     }
-                    dst.push((wbits >> wnbits - 8) as u8);
+                    dst.push((wbits >> (wnbits - 8)) as u8);
                     wdst += 1;
                     wnbits -= 8;
                 }
@@ -306,11 +304,11 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
                 wnbits += bits + 4;
                 offbits += bits + 4;
             }
-            wbits = wbits << bits | (toff & ((1) << bits) - 1) as usize;
+            wbits = wbits << bits | (toff & (((1) << bits) - 1)) as usize;
             while s != ss {
                 if s + MIN_MATCH <= esrc {
                     h = hashit(cont);
-                    w.next[(now & (WHACK_MAX_OFF - 1) as u16) as usize] = w.hash[h as usize];
+                    w.next[(now & (WHACK_MAX_OFF - 1)) as usize] = w.hash[h as usize];
                     w.hash[h as usize] = now;
                     if s + MIN_MATCH < esrc {
                         cont = cont << 8 | src[s + MIN_MATCH] as usize;
@@ -337,14 +335,14 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
         if wdst >= wdmax {
             return None;
         }
-        dst.push((wbits >> wnbits - 8) as u8);
+        dst.push((wbits >> (wnbits - 8)) as u8);
         wdst += 1;
         wnbits -= 8;
     }
 
     stats.statoutbytes += wdst;
     assert_eq!(wdst, dst.len());
-    return Some(dst);
+    Some(dst)
 }
 
 pub fn whackblock(src: &[u8], ssize: usize) -> Option<Vec<u8>> {
@@ -358,5 +356,5 @@ pub fn whackblock(src: &[u8], ssize: usize) -> Option<Vec<u8>> {
         statlenbits: 0,
     };
     let mut w = whackinit(6);
-    whack(&mut w, &src, ssize, &mut stats)
+    whack(&mut w, src, ssize, &mut stats)
 }

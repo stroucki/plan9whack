@@ -33,12 +33,11 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
         /*
         literal
          */
-        len = LENVAL[(uwbits >> uwnbits - 5 & 0x1f) as usize] as usize;
+        len = LENVAL[uwbits >> (uwnbits - 5) & 0x1f] as usize;
         if len == 0 {
             if lithist & 0xf != 0 {
                 uwnbits -= 9;
                 lit = (uwbits >> uwnbits & 0xff) as u8;
-                lit = lit & 255;
             } else {
                 uwnbits -= 8;
                 lit = (uwbits >> uwnbits & 0x7f) as u8;
@@ -50,7 +49,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                         uwnbits -= 3;
                         lit = ((lit) << 3) | (uwbits >> uwnbits & 7) as u8;
                     }
-                    lit = lit - 64;
+                    lit -= 64;
                 }
             }
             if dpos >= dmax {
@@ -59,13 +58,13 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
 
             dst.push(lit);
             dpos += 1;
-            lithist = (lithist << 1) | if lit < 32 || lit > 127 { 1 } else { 0 };
+            lithist = (lithist << 1) | if !(32..=127).contains(&lit) { 1 } else { 0 };
         } else {
             /*
             length
              */
             if len < 255 {
-                uwnbits -= LENBITS[len as usize] as u32;
+                uwnbits -= LENBITS[len] as u32;
             } else {
                 uwnbits -= D_BIG_LEN_BITS;
                 code = ((uwbits >> uwnbits & (((1) << D_BIG_LEN_BITS) - 1))
@@ -106,7 +105,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
             off = OFFBASE[bits as usize] as usize;
             bits = OFFBITS[bits as usize] as u32;
             uwnbits -= bits;
-            off |= (uwbits >> uwnbits) as usize & (((1) << bits) - 1);
+            off |= (uwbits >> uwnbits) & (((1) << bits) - 1);
             off += 1;
             if off > dpos {
                 return Err(format!(
