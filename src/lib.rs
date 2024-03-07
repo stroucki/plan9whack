@@ -29,7 +29,7 @@ mod tests {
         let compressed = large_compressed_data();
         let decompressed = large_uncompressed_data();
         let src = general_purpose::STANDARD.decode(decompressed).unwrap();
-        let rv = whack::whackblock(&src, 10442);
+        let rv = whack::whackblock(&src, src.len());
         if rv.is_some() {
             let target = general_purpose::STANDARD.decode(compressed).unwrap();
 
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     pub fn unwhack_null() -> Result<(), String> {
         let src = Vec::new();
-        let rv = unwhack::unwhack(&src, 0);
+        let rv = unwhack::unwhack(&src, src.len());
         if rv.is_ok() {
             Ok(())
         } else {
@@ -59,10 +59,9 @@ mod tests {
         let compressed = large_compressed_data();
         let decompressed = large_uncompressed_data();
         let src = general_purpose::STANDARD.decode(compressed).unwrap();
-        let rv = unwhack::unwhack(&src, 10442);
+        let target = general_purpose::STANDARD.decode(decompressed).unwrap();
+        let rv = unwhack::unwhack(&src, target.len());
         if rv.is_ok() {
-            let target = general_purpose::STANDARD.decode(decompressed).unwrap();
-
             let result = rv.unwrap();
             if target != result {
                 return Err(String::from(

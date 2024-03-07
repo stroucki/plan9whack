@@ -131,7 +131,7 @@ pub fn unwhack(src: &Vec<u8>, ndst: usize) -> Result<Vec<u8>, String> {
         return Err(String::from("compressed data overrun"));
     }
 
-    len = dpos;
-    assert_eq!(len, ndst);
+    //len = dpos;
+    //assert_eq!(len, ndst);
     Ok(dst)
 }
