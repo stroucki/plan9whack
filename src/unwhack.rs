@@ -2,7 +2,7 @@ use crate::constants::*;
 
 pub fn unwhackinit() {}
 
-pub fn unwhack(src: &Vec<u8>, ndst: usize) -> Result<Vec<u8>, String> {
+pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
     let mut dst: Vec<u8> = Vec::with_capacity(ndst);
     let mut dpos = 0;
     let mut spos = 0;
