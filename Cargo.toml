@@ -1,7 +1,7 @@
 [package]
 name = "plan9whack"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 authors = ["Michael Stroucken <mxs@cmu.edu>"]
 repository = "https://github.com/stroucki/plan9whack/"
 description = "A port of the whack compression scheme from Plan9's venti"
@@ -11,4 +11,4 @@ keywords = ["compression", "plan9", "venti"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev-dependencies]
-base64 = "0.22.0"
+base64 = "0.22.1"

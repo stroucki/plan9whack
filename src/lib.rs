@@ -3,7 +3,7 @@
 //! came via Russ Cox and the 9fans/plan9port repository.
 //!
 //! Use the unwhack function to decompress, and whackblock to compress.
-// Copyright 2024 by Michael Stroucken
+// Copyright 2024-2026 by Michael Stroucken
 mod constants;
 mod testdata;
 pub mod unwhack;
@@ -11,8 +11,8 @@ pub mod whack;
 
 #[cfg(test)]
 mod tests {
-    use base64::engine::general_purpose;
     use base64::Engine;
+    use base64::engine::general_purpose;
 
     use self::testdata::{large_compressed_data, large_uncompressed_data, random_data};
 
@@ -59,7 +59,7 @@ mod tests {
         let rv = whack::whackblock(&src, src.len());
         if rv.is_some() {
             if src.len() > rv.unwrap().len() {
-                // should really be impossible 
+                // should really be impossible
                 return Err(String::from("result was expanded"));
             }
             Err(String::from("test data not uncompressible enough"))

@@ -1,4 +1,4 @@
-// Copyright 2024 by Michael Stroucken
+// Copyright 2024-2026 by Michael Stroucken
 use crate::constants::*;
 
 /// Compression dictionary
@@ -30,11 +30,8 @@ pub fn whackinit(level: u8) -> Whack {
     let mut thwmaxcheck;
     thwmaxcheck = (1) << level;
     thwmaxcheck -= thwmaxcheck >> 2;
-    if thwmaxcheck < 2 {
-        thwmaxcheck = 2;
-    } else if thwmaxcheck > 1024 {
-        thwmaxcheck = 1024;
-    }
+    thwmaxcheck = thwmaxcheck.clamp(2, 1024);
+
     Whack {
         begin: 2 * WHACK_MAX_OFF,
         hash: [0; 16384],
@@ -188,8 +185,7 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
 
         sss = s;
         let wmr = whackmatch(w, src, sss, esrc, h, now);
-        if wmr.is_some() {
-            let foo = wmr.unwrap();
+        if let Some(foo) = wmr {
             (toff, len) = (foo.off, foo.len);
         } else {
             (len, toff) = (0, 0);
@@ -261,7 +257,6 @@ pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<V
                 wnbits += bits;
                 lenbits += bits;
             } else {
-                //stop();
                 code = BIG_LEN_CODE as usize;
                 bits = BIG_LEN_BITS as u16;
                 use_0 = BIG_LEN_BASE;
