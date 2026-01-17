@@ -2,10 +2,20 @@
 use crate::constants::*;
 
 /// Compression dictionary
+///
+/// It maintains the dictionary indices by implementing a
+/// hash table of 16384 entries that point to a previous
+/// entry at that position. Values in the arrays are
+/// u16 starting at values that cannot be considered
+/// hash table indices, if the two tables used to be combined.
 pub struct Whack {
+    /// beginning dictionary index
     pub begin: u16,
+    /// lookup value from hash to next index
+    /// index ranges from 0..16384, but values range from 32768..65536
     pub hash: [u16; 16384],
     pub next: [u16; 16384],
+    /// maximum length to consider
     pub thwmaxcheck: u32,
 }
 
@@ -30,10 +40,11 @@ pub fn whackinit(level: u8) -> Whack {
     let mut thwmaxcheck;
     thwmaxcheck = (1) << level;
     thwmaxcheck -= thwmaxcheck >> 2;
+    // thwmaxcheck = 0.75 * 2^level
     thwmaxcheck = thwmaxcheck.clamp(2, 1024);
 
     Whack {
-        begin: 2 * WHACK_MAX_OFF,
+        begin: 2 * WHACK_MAX_OFF, // XXXstroucki why?
         hash: [0; 16384],
         next: [0; 16384],
         thwmaxcheck,
@@ -42,42 +53,43 @@ pub fn whackinit(level: u8) -> Whack {
 
 /// find a string in the dictionary
 fn whackmatch(
-    b: &Whack,
+    w: &Whack,
     src: &[u8],
-    ss: usize,
-    mut esrc: usize,
-    h: u16,
-    now: u16,
+    current_source_position: usize,
+    max_source_position: usize,
+    hash: u16,
+    current_dict_position: u16,
 ) -> Option<DictLookup> {
-    let mut then: u16;
-    let mut off: u16;
+    let mut last_dict_position: u16;
+    let mut candidate_offset: u16;
     let mut bestoff: u16;
     let mut bestlen: usize;
     let mut check: u32;
-    let mut s: usize = ss;
-    let mut t: usize;
-    let mut last: u16;
+    let mut current_match_position: usize = current_source_position;
+    let mut candidate_match_position: usize;
+    let mut last_candidate_offset: u16;
+    let mut max_match_position = max_source_position;
 
-    if esrc < s + MIN_MATCH {
+    if max_match_position < current_match_position + MIN_MATCH {
         return None;
     }
 
-    if s + MAXLEN < esrc {
-        esrc = s + MAXLEN;
+    if current_match_position + MAXLEN < max_match_position {
+        max_match_position = current_match_position + MAXLEN;
     }
     bestoff = 0;
     bestlen = 0;
-    check = b.thwmaxcheck;
-    last = 0;
-    then = b.hash[h as usize];
+    check = w.thwmaxcheck;
+    last_candidate_offset = 0;
+    last_dict_position = w.hash[hash as usize];
     loop {
         if check == 0 {
             break;
         }
         check -= 1;
 
-        off = now - then;
-        if off <= last || off > WHACK_MAX_OFF {
+        candidate_offset = current_dict_position - last_dict_position;
+        if candidate_offset <= last_candidate_offset || candidate_offset > WHACK_MAX_OFF {
             break;
         }
 
@@ -86,32 +98,35 @@ fn whackmatch(
          * 1) s too close check above
          */
 
-        t = s - off as usize;
-        if src[s] == src[t]
-            && src[s + 1] == src[t + 1]
-            && src[s + 2] == src[t + 2]
-            && (bestlen == 0 || esrc - s > bestlen && src[s + bestlen] == src[t + bestlen])
+        candidate_match_position = current_match_position - candidate_offset as usize;
+        if src[current_match_position] == src[candidate_match_position]
+            && src[current_match_position + 1] == src[candidate_match_position + 1]
+            && src[current_match_position + 2] == src[candidate_match_position + 2]
+            && (bestlen == 0
+                || max_match_position - current_match_position > bestlen
+                    && src[current_match_position + bestlen]
+                        == src[candidate_match_position + bestlen])
         {
-            t += 3;
-            s += 3;
-            while s < esrc {
-                if src[s] != src[t] {
+            candidate_match_position += 3;
+            current_match_position += 3;
+            while current_match_position < max_match_position {
+                if src[current_match_position] != src[candidate_match_position] {
                     break;
                 }
-                t += 1;
-                s += 1;
+                candidate_match_position += 1;
+                current_match_position += 1;
             }
-            if s - ss > bestlen {
-                bestlen = s - ss;
-                bestoff = off;
-                if bestlen > b.thwmaxcheck as usize {
+            if current_match_position - current_source_position > bestlen {
+                bestlen = current_match_position - current_source_position;
+                bestoff = candidate_offset;
+                if bestlen > w.thwmaxcheck as usize {
                     break;
                 }
             }
         }
-        s = ss;
-        last = off;
-        then = b.next[(then & (WHACK_MAX_OFF - 1)) as usize];
+        current_match_position = current_source_position;
+        last_candidate_offset = candidate_offset;
+        last_dict_position = w.next[(last_dict_position & (WHACK_MAX_OFF - 1)) as usize];
     }
 
     Some(DictLookup {
@@ -132,219 +147,273 @@ fn whackmatch(
 /*
 #define hashit(c)       ((((ulong)(c) * 0x6b43a9) >> (24 - HashLog)) & HashMask)
 */
+/// hash the bottom 24 bits of `c` into a 14 bit value
+#[inline]
 fn hashit(c: usize) -> u16 {
     ((((c & 0xffffff) * 0x6b43a9b5) >> (32 - HASH_LOG)) as u32 & HASH_MASK) as u16
 }
 
+/// Compress a section of data
+///
 /// lz77 compression with single lookup in a hash table for each block
-pub fn whack(w: &mut Whack, src: &[u8], n: usize, stats: &mut Stats) -> Option<Vec<u8>> {
-    let mut s: usize;
-    let mut ss: usize;
-    let mut sss: usize;
+///
+/// Takes data in `src` and outputs a [`Vec<u8>`], updating
+/// [`Stats`] in `stats`
+///
+/// # Errors
+///
+/// If source is too small, compressed data is larger than
+/// source or likely to be so
+pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
+    let mut current_source_position: usize;
+    let mut target_source_position: usize;
 
     let mut half: usize;
-    let mut wdst: usize;
+    let mut current_output_length: usize;
 
     let mut cont: usize;
-    let mut code: usize;
-    let mut wbits: usize;
-    let mut now: u16;
-    let mut toff: u16;
+    let mut pending_output_bits: usize;
+    let mut current_dict_position: u16;
     let mut lithist: u32;
-    let mut h: u16;
-    let mut len: u16;
-    let mut bits: u16;
-    let mut use_0: u32;
-    let mut wnbits: u16;
+    let mut pending_output_bits_length: u16;
     let mut lits: usize;
     let mut matches: usize;
     let mut offbits: u16;
     let mut lenbits: u16;
-    if n < MIN_MATCH {
+    let max_source_position = src.len();
+    if max_source_position < MIN_MATCH {
         return None;
     }
 
-    let mut dst = Vec::with_capacity(n);
-    wdst = 0;
-    let wdmax: usize = n;
-    now = w.begin;
-    s = 0;
+    let mut dst = Vec::with_capacity(max_source_position);
+    current_output_length = 0;
+    let max_output_length: usize = max_source_position;
+    current_dict_position = w.begin;
+    current_source_position = 0;
 
-    cont = (((src[s] as u32) << 16) | ((src[s + 1] as u32) << 8) | (src[s + 2] as u32)) as usize;
-    let esrc: usize = s + n;
-    half = s + (n >> 1);
-    wnbits = 0;
-    wbits = 0;
+    cont = (((src[current_source_position] as u32) << 16)
+        | ((src[current_source_position + 1] as u32) << 8)
+        | (src[current_source_position + 2] as u32)) as usize;
+    half = max_source_position >> 1;
+    pending_output_bits_length = 0;
+    pending_output_bits = 0;
     lits = 0;
     matches = 0;
     offbits = 0;
     lenbits = 0;
     lithist = !(0);
-    while s < esrc {
-        h = hashit(cont);
-
-        sss = s;
-        let wmr = whackmatch(w, src, sss, esrc, h, now);
+    while current_source_position < max_source_position {
+        let mut hash = hashit(cont);
+        let mut match_len;
+        let mut match_offset;
+        let wmr = whackmatch(
+            w,
+            src,
+            current_source_position,
+            max_source_position,
+            hash,
+            current_dict_position,
+        );
         if let Some(foo) = wmr {
-            (toff, len) = (foo.off, foo.len);
+            (match_offset, match_len) = (foo.off, foo.len);
         } else {
-            (len, toff) = (0, 0);
+            (match_offset, match_len) = (0, 0);
         }
-        ss = s + len as usize;
+        target_source_position = current_source_position + match_len as usize;
 
-        while wnbits >= 8 {
-            if wdst >= wdmax {
-                w.begin = now;
+        // flush pending bytes
+        while pending_output_bits_length >= 8 {
+            if current_output_length >= max_output_length {
+                // fail if output length exceeds source length
+                w.begin = current_dict_position;
                 return None;
             }
-            let value = (wbits >> (wnbits - 8)) as u8;
+            let value = (pending_output_bits >> (pending_output_bits_length - 8)) as u8;
             dst.push(value);
-            wdst += 1;
-            wnbits -= 8;
+            current_output_length += 1;
+            pending_output_bits_length -= 8;
         }
-        if (len as usize) < MIN_MATCH {
-            toff = src[s] as u16;
-            lithist = lithist << 1 | if !(32..=127).contains(&toff) { 1 } else { 0 };
+
+        if (match_len as usize) < MIN_MATCH {
+            let mut current_byte = src[current_source_position] as u16;
+            // append 1 if current byte is ASCII, else 0
+            lithist = lithist << 1
+                | if !(32..=127).contains(&current_byte) {
+                    1
+                } else {
+                    0
+                };
 
             if lithist & 0x1e != 0 {
-                wbits = wbits << 9 | toff as usize;
-                wnbits += 9;
+                // if previously any of the last 4 characters were not ASCII
+                // append byte extended by leading 0 bit
+                pending_output_bits = pending_output_bits << 9 | current_byte as usize;
+                pending_output_bits_length += 9;
             } else if lithist & 1 != 0 {
-                toff = (toff + 64) & 0xff;
-                if toff < 96 {
-                    wbits = wbits << 10 | toff as usize;
-                    wnbits += 10;
+                // if the current character was not ASCII, add 64
+                current_byte = (current_byte + 64) & 0xff;
+                if current_byte < 96 {
+                    // if current character was < 32
+                    // append new byte extended by two leading 0 bits
+                    pending_output_bits = pending_output_bits << 10 | current_byte as usize;
+                    pending_output_bits_length += 10;
                 } else {
-                    wbits = wbits << 11 | toff as usize;
-                    wnbits += 11;
+                    // append new byte extended by three leading 0 bits
+                    pending_output_bits = pending_output_bits << 11 | current_byte as usize;
+                    pending_output_bits_length += 11;
                 }
             } else {
-                wbits = wbits << 8 | toff as usize;
-                wnbits += 8;
+                // if all of the last 5 characters were ASCII
+                // append byte
+                pending_output_bits = pending_output_bits << 8 | current_byte as usize;
+                pending_output_bits_length += 8;
             }
             lits += 1;
 
             /*
              * speed hack
-             * check for compression progress, bail if none achieved
+             * check for compression progress, bail if none achieved by halfway point
              */
-            if s > half {
-                if (4 * s) < (5 * lits) {
-                    w.begin = now;
+            if current_source_position > half {
+                if (4 * current_source_position) < (5 * lits) {
+                    w.begin = current_dict_position;
                     return None;
                 }
-                half = esrc;
+                half = max_source_position;
             }
-            if s + MIN_MATCH <= esrc {
-                w.next[(now & (WHACK_MAX_OFF - 1)) as usize] = w.hash[h as usize];
-                w.hash[h as usize] = now;
-                if s + MIN_MATCH < esrc {
-                    cont = cont << 8 | src[s + MIN_MATCH] as usize;
+            if current_source_position + MIN_MATCH <= max_source_position {
+                w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
+                    w.hash[hash as usize];
+                w.hash[hash as usize] = current_dict_position;
+                if current_source_position + MIN_MATCH < max_source_position {
+                    cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
                 }
             }
-            now += 1;
-            s += 1;
+            current_dict_position += 1;
+            current_source_position += 1;
         } else {
             matches += 1;
-            if (len as usize) > MAXLEN {
-                len = MAXLEN as u16;
-                ss = s + len as usize;
+            if (match_len as usize) > MAXLEN {
+                match_len = MAXLEN as u16;
+                target_source_position = current_source_position + match_len as usize;
             }
-            len -= MIN_MATCH as u16;
-            if len < MAX_FAST_LEN as u16 {
-                bits = LENTAB[len as usize].bits;
-                wbits = wbits << bits | LENTAB[len as usize].encode;
-                wnbits += bits;
+            match_len -= MIN_MATCH as u16;
+            if match_len < MAX_FAST_LEN as u16 {
+                let huff = &LENTAB[match_len as usize];
+                let bits = huff.bits;
+                pending_output_bits = pending_output_bits << bits | huff.encode;
+                pending_output_bits_length += bits;
                 lenbits += bits;
             } else {
-                code = BIG_LEN_CODE as usize;
-                bits = BIG_LEN_BITS as u16;
-                use_0 = BIG_LEN_BASE;
-                len -= MAX_FAST_LEN as u16;
-                while len as u32 >= use_0 {
-                    len -= use_0 as u16;
+                let mut code = BIG_LEN_CODE as usize;
+                let mut bits = BIG_LEN_BITS as u16;
+                let mut use_0 = BIG_LEN_BASE;
+                match_len -= MAX_FAST_LEN as u16;
+                while match_len as u32 >= use_0 {
+                    match_len -= use_0 as u16;
                     code = (code + use_0 as usize) << 1;
                     use_0 <<= bits & 1 ^ 1;
                     bits += 1;
                 }
-                wbits = wbits << bits | (code + len as usize);
-                wnbits += bits;
+                pending_output_bits = pending_output_bits << bits | (code + match_len as usize);
+                pending_output_bits_length += bits;
                 lenbits += bits;
-                while wnbits >= 8 {
-                    if wdst >= wdmax {
-                        w.begin = now;
+                while pending_output_bits_length >= 8 {
+                    if current_output_length >= max_output_length {
+                        // fail if output length exceeds source length
+                        w.begin = current_dict_position;
                         return None;
                     }
-                    dst.push((wbits >> (wnbits - 8)) as u8);
-                    wdst += 1;
-                    wnbits -= 8;
+                    dst.push((pending_output_bits >> (pending_output_bits_length - 8)) as u8);
+                    current_output_length += 1;
+                    pending_output_bits_length -= 8;
                 }
             }
 
             /*
              * offset in history
              */
-            toff -= 1;
-            bits = MIN_OFF_BITS as u16;
-            while toff >= (1) << bits {
+            match_offset -= 1;
+            let mut bits = MIN_OFF_BITS as u16;
+            while match_offset >= (1) << bits {
                 bits += 1;
             }
             if bits < (MAX_OFF_BITS - 1) as u16 {
-                wbits = wbits << 3 | (bits - MIN_OFF_BITS as u16) as usize;
+                pending_output_bits =
+                    pending_output_bits << 3 | (bits - MIN_OFF_BITS as u16) as usize;
                 if bits != MIN_OFF_BITS as u16 {
                     bits -= 1;
                 }
-                wnbits += bits + 3;
+                pending_output_bits_length += bits + 3;
                 offbits += bits + 3;
             } else {
-                wbits = wbits << 4 | 0xe | (bits - (MAX_OFF_BITS - 1) as u16) as usize;
+                pending_output_bits =
+                    pending_output_bits << 4 | 0xe | (bits - (MAX_OFF_BITS - 1) as u16) as usize;
                 bits -= 1;
-                wnbits += bits + 4;
+                pending_output_bits_length += bits + 4;
                 offbits += bits + 4;
             }
-            wbits = wbits << bits | (toff & (((1) << bits) - 1)) as usize;
-            while s != ss {
-                if s + MIN_MATCH <= esrc {
-                    h = hashit(cont);
-                    w.next[(now & (WHACK_MAX_OFF - 1)) as usize] = w.hash[h as usize];
-                    w.hash[h as usize] = now;
-                    if s + MIN_MATCH < esrc {
-                        cont = cont << 8 | src[s + MIN_MATCH] as usize;
+            pending_output_bits =
+                pending_output_bits << bits | (match_offset & (((1) << bits) - 1)) as usize;
+            while current_source_position != target_source_position {
+                if current_source_position + MIN_MATCH <= max_source_position {
+                    hash = hashit(cont);
+                    w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
+                        w.hash[hash as usize];
+                    w.hash[hash as usize] = current_dict_position;
+                    if current_source_position + MIN_MATCH < max_source_position {
+                        cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
                     }
                 }
-                now += 1;
-                s += 1;
+                current_dict_position += 1;
+                current_source_position += 1;
             }
         }
     }
-    w.begin = now;
-    stats.statbytes += esrc;
+    w.begin = current_dict_position;
+    stats.statbytes += max_source_position;
     stats.statlits += lits;
     stats.statmatches += matches;
-    stats.statlitbits += (wdst - 2) * 8 + wnbits as usize - offbits as usize - lenbits as usize;
+    stats.statlitbits += current_output_length * 8 + pending_output_bits_length as usize
+        - offbits as usize
+        - lenbits as usize;
+    /*
+        // XXXstroucki that -2 can cause the value to become negative.
+    stats.statlitbits += (current_output_length - 2) * 8 + pending_output_bits_length as usize
+        - offbits as usize
+        - lenbits as usize;
+        */
     stats.statoffbits += offbits as usize;
     stats.statlenbits += lenbits as usize;
 
-    if wnbits & 7 != 0 {
-        wbits <<= 8 - (wnbits & 7);
-        wnbits += 8 - (wnbits & 7);
+    if pending_output_bits_length & 7 != 0 {
+        pending_output_bits <<= 8 - (pending_output_bits_length & 7);
+        pending_output_bits_length += 8 - (pending_output_bits_length & 7);
     }
-    while wnbits >= 8 {
-        if wdst >= wdmax {
+    while pending_output_bits_length >= 8 {
+        // fail if output length exceeds source length
+        if current_output_length >= max_output_length {
             return None;
         }
-        dst.push((wbits >> (wnbits - 8)) as u8);
-        wdst += 1;
-        wnbits -= 8;
+        dst.push((pending_output_bits >> (pending_output_bits_length - 8)) as u8);
+        current_output_length += 1;
+        pending_output_bits_length -= 8;
     }
 
-    stats.statoutbytes += wdst;
+    stats.statoutbytes += current_output_length;
     //assert_eq!(wdst, dst.len());
     Some(dst)
 }
 
 /// Compress a section of data
-pub fn whackblock(src: &[u8], ssize: usize) -> Option<Vec<u8>> {
+///
+/// Takes data in `src` and outputs a [`Vec<u8>`]
+///
+/// # Errors
+///
+/// If source is too small, compressed data is larger than
+/// source or likely to be so
+pub fn whackblock(src: &[u8]) -> Option<Vec<u8>> {
     let mut stats = Stats {
         statbytes: 0,
         statoutbytes: 0,
@@ -355,5 +424,5 @@ pub fn whackblock(src: &[u8], ssize: usize) -> Option<Vec<u8>> {
         statlenbits: 0,
     };
     let mut w = whackinit(6);
-    whack(&mut w, src, ssize, &mut stats)
+    whack(&mut w, src, &mut stats)
 }

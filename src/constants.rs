@@ -1,4 +1,4 @@
-// Copyright 2024 by Michael Stroucken
+// Copyright 2024-2026 by Michael Stroucken
 //pub const MAX_SEQ_START: u32 = 256;
 //pub const MAX_SEQ_MASK: u32 = 8;
 pub const MIN_DECODE: u32 = 8;
@@ -8,17 +8,22 @@ pub const HASH_MASK: u32 = 16383;
 pub const HASH_LOG: u32 = 14;
 pub const WHACK_MAX_OFF: u16 = 16384;
 pub const BIG_LEN_BITS: u32 = 9;
-pub const BIG_LEN_BASE: u32 = 4; //starting items to encode for big lens
-pub const BIG_LEN_CODE: u16 = 500; //minimum code for large length encoding
+/// starting items to encode for big lens
+pub const BIG_LEN_BASE: u32 = 4;
+/// minimum code for large length encoding
+pub const BIG_LEN_CODE: u16 = 500;
 pub const MIN_OFF_BITS: u8 = 6;
 pub const MAX_OFF_BITS: u8 = MIN_OFF_BITS + 8;
 pub const MAX_FAST_LEN: u8 = 9;
-pub const MAXLEN: usize = 2051; // max. length encodable in 24 bits
+/// max. length encodable in 24 bits
+pub const MAXLEN: usize = 2051;
 
 pub const D_BIG_LEN_BITS: u32 = 6;
-pub const D_BIG_LEN_BASE: u32 = 1; //starting items to encode for big lens
+/// starting items to encode for big lens
+pub const D_BIG_LEN_BASE: u32 = 1;
 pub const DMAX_FAST_LEN: usize = 7;
-pub const D_BIG_LEN_CODE: u8 = 60; //minimum code for large length encoding
+/// minimum code for large length encoding
+pub const D_BIG_LEN_CODE: u8 = 60;
 
 pub static LENVAL: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6, 255,
@@ -32,8 +37,10 @@ pub static OFFBASE: [u16; 16] = [
 ];
 
 pub struct Huff {
-    pub bits: u16,     // length of the code
-    pub encode: usize, // the code
+    /// length of the code
+    pub bits: u16,
+    /// the code
+    pub encode: usize,
 }
 
 pub static LENTAB: [Huff; 9] = [

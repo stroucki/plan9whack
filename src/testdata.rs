@@ -39,7 +39,8 @@ pub fn large_compressed_data() -> String {
 }
 
 #[cfg(test)]
-/// generate ground truth uncompressed data vector from large_compressed_data()
+/// generate ground truth uncompressed data vector from large_compressed_data().
+/// currently is the output of a `cat /proc/cpuinfo`.
 pub fn large_uncompressed_data() -> String {
     let mut decompressed = String::from(
         "cHJvY2Vzc29yCTogMAp2ZW5kb3JfaWQJOiBHZW51aW5lSW50ZWwKY3B1IGZhbWlseQk6IDYKbW9k
