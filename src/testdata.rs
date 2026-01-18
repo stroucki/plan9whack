@@ -1,3 +1,4 @@
+// The ground truth vectors were created with the original C source.
 #[cfg(test)]
 /// generate random data vector to see if compression bails
 pub fn random_data() -> String {
@@ -7,6 +8,44 @@ xP/KsvLo1g==",
     );
     random.retain(|c| !c.is_whitespace());
     random
+}
+
+#[cfg(test)]
+/// ground truth of compressed [0u8;65536]
+pub fn compressed_65k_0bits() -> String {
+    let mut compressed = String::from(
+        "AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n
+/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//
+n/AH/8/4A//n/AH/8/4A//meAAA=",
+    );
+    compressed.retain(|c| !c.is_whitespace());
+    compressed
+}
+
+#[cfg(test)]
+/// ground truth of compressed [255u8;65536]
+pub fn compressed_65k_1bits() -> String {
+    let mut compressed = String::from(
+        "f//8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n
+/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//n/AH/8/4A//
+n/AH/8/4A//n/AH/8/4A//meAAA=",
+    );
+    compressed.retain(|c| !c.is_whitespace());
+    compressed
+}
+
+#[cfg(test)]
+/// ground truth of compressed [0..256,0..256]
+pub fn compressed_512_countup() -> String {
+    let mut compressed = String::from(
+        "AABAQDAgFAwHBAJBQLBgNBwPCARCQTCgVCwXDAZDQbDgdDwfEAhEQjJCUmJygpKissLS4vMDEyMz
+Q1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG
+1ub3BxcnN0dXZ3eHl6e3x9fn8YCBQSDQiFQyHRCJRSLRiNRyPSCRSSTSiVSyXTCZTSbTidTyfUCh
+USjUilUynVCpVSrVitVyvWCxWSzWi1Wy3XC5XS7Xi9Xy/YDBYTDYjFYzHZDJZTLZjNZzPaDRaTTa
+jVazXbDZbTbbjdbzfcDhcTjcjlczndDpdTrdjtdzveDxeTzej1ez3fD5fT7fj9fz//88X8A=",
+    );
+    compressed.retain(|c| !c.is_whitespace());
+    compressed
 }
 
 #[cfg(test)]

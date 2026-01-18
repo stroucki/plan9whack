@@ -12,7 +12,7 @@ pub struct Whack {
     /// beginning dictionary index
     pub begin: u16,
     /// lookup value from hash to next index
-    /// index ranges from 0..16384, but values range from 32768..65536
+    /// index ranges from 0..16384, but values can overflow
     pub hash: [u16; 16384],
     pub next: [u16; 16384],
     /// maximum length to consider
@@ -289,7 +289,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
                     cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
                 }
             }
-            current_dict_position += 1;
+            current_dict_position = current_dict_position.wrapping_add(1);
             current_source_position += 1;
         } else {
             matches += 1;
@@ -365,7 +365,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
                         cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
                     }
                 }
-                current_dict_position += 1;
+                current_dict_position = current_dict_position.wrapping_add(1);
                 current_source_position += 1;
             }
         }
@@ -379,6 +379,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
         - lenbits as usize;
     /*
         // XXXstroucki that -2 can cause the value to become negative.
+        // Original C source returns overflowed nonsense.
     stats.statlitbits += (current_output_length - 2) * 8 + pending_output_bits_length as usize
         - offbits as usize
         - lenbits as usize;
