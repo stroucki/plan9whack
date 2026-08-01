@@ -1,5 +1,5 @@
-// Copyright 2024-2026 by Michael Stroucken
 use crate::constants::*;
+use std::ptr;
 
 /// uncompress a section of data
 ///
@@ -139,26 +139,20 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                 return Err(String::from("len out of range"));
             }
 
-            /*
-            // can't use extend_from_within trivially, because the length can go past the current end of the
-            // destination
-            // it also appears to be slower than the byte by byte push
-            let mut start = current_dest_pos - off;
-            while len > 0 {
-                let count = std::cmp::min(dst.len() - start, len);
-                dst.extend_from_within(start..start + count);
-                len -= count;
-                start += count;
-                current_dest_pos += count;
-            }
-            */
             let s = current_dest_pos - off;
 
-            let mut i = 0;
-            while i < len {
-                dst.push(dst[s + i]);
-                i += 1;
+            // Bulk copy: use ptr::copy (memmove semantics) to copy possibly overlapping regions
+            if len > 0 {
+                dst.reserve(len);
+                unsafe {
+                    let dst_ptr = dst.as_mut_ptr();
+                    // extend vector length so we can write into the new region
+                    dst.set_len(current_dest_pos + len);
+                    // ptr::copy handles overlap (memmove semantics)
+                    ptr::copy(dst_ptr.add(s), dst_ptr.add(current_dest_pos), len);
+                }
             }
+
             current_dest_pos += len;
         }
     }

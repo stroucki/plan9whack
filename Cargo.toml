@@ -13,3 +13,4 @@ keywords = ["compression", "plan9", "venti"]
 [dev-dependencies]
 base64 = "0.23.0"
 proptest = "1.11.0"
+criterion = "0.4"
