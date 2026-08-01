@@ -22,6 +22,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
     let mut lithist: usize = !0;
 
     while current_source_pos < max_source_pos || read_bits_count - over_bits_count >= MIN_DECODE {
+        // try to read 4 bytes
         while read_bits_count <= 24 {
             read_bits <<= 8;
             if current_source_pos < max_source_pos {
@@ -32,26 +33,37 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
             }
             read_bits_count += 8;
         }
-        /*
-        literal
-         */
+
+        // look at top 5 bits read, if two top bits are 00 or 01, it is a literal,
+        // otherwise it is a (length, offset) pair
         let mut len = LENVAL[read_bits >> (read_bits_count - 5) & 0x1f] as usize;
+
         if len == 0 {
+            /*
+            literal
+             */
             let mut lit;
             if lithist & 0xf != 0 {
+                // if there was a non-ascii character in the four previous characters,
+                // read in 9 bits and keep 8
                 read_bits_count -= 9;
                 lit = (read_bits >> read_bits_count & 0xff) as u8;
             } else {
+                // skip 1 bit and get the next 7
                 read_bits_count -= 8;
                 lit = (read_bits >> read_bits_count & 0x7f) as u8;
+                // if between 32 and 127, was plain ascii
                 if (lit) < 32 {
                     if (lit) < 24 {
+                        // control chars have two 0 bits prepended, shift in data bits
                         read_bits_count -= 2;
                         lit = ((lit) << 2) | (read_bits >> read_bits_count & 3) as u8;
                     } else {
+                        // 8 bit values have three 0 bits prepended, shift in data bits
                         read_bits_count -= 3;
                         lit = ((lit) << 3) | (read_bits >> read_bits_count & 7) as u8;
                     }
+                    // adjust for offset during encoding
                     lit -= 64;
                 }
             }
@@ -61,6 +73,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
 
             dst.push(lit);
             current_dest_pos += 1;
+            // keep history of previously seen literals, 0 if ascii, 1 if not
             lithist = (lithist << 1) | if !(32..=127).contains(&lit) { 1 } else { 0 };
         } else {
             /*
@@ -70,25 +83,30 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                 read_bits_count -= LENBITS[len] as u32;
             } else {
                 read_bits_count -= D_BIG_LEN_BITS;
+                // rbc = 32 -> 26
                 let mut code = ((read_bits >> read_bits_count & (((1) << D_BIG_LEN_BITS) - 1))
                     - D_BIG_LEN_CODE as usize) as u32;
+                // code = top 6 bits - 111100
+                // 00 -> 7, 01 -> {8, 9}, 10 -> {10..15}, 10 -> higher
                 len = DMAX_FAST_LEN;
-                let mut use_0 = D_BIG_LEN_BASE;
-                let mut bits = D_BIG_LEN_BITS & 1 ^ 1;
-                while code >= use_0 {
+                let mut step = D_BIG_LEN_BASE;
+                let mut shift = D_BIG_LEN_BITS & 1 ^ 1; // 1 if even, 0 if odd
+                while code >= step {
                     if read_bits_count == 0 {
                         return Err(String::from("len out of range"));
                     }
-                    len += use_0 as usize;
-                    code -= use_0;
+                    len += step as usize;
+                    code -= step;
                     code <<= 1;
                     read_bits_count -= 1;
 
+                    // get another bit
                     code |= (read_bits >> read_bits_count & 1) as u32;
-                    use_0 <<= bits;
-                    bits ^= 1;
+                    step <<= shift;
+                    shift ^= 1;
                 }
                 len += code as usize;
+
                 while read_bits_count <= 24 {
                     read_bits <<= 8;
                     if current_source_pos < max_source_pos {
@@ -110,6 +128,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
             read_bits_count -= bits;
             off |= (read_bits >> read_bits_count) & (((1) << bits) - 1);
             off += 1;
+
             if off > current_dest_pos {
                 return Err(format!(
                     "offset out of range: off={off} d={current_dest_pos} len={len} nbits={read_bits_count}",
@@ -120,16 +139,26 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                 return Err(String::from("len out of range"));
             }
 
+            /*
+            // can't use extend_from_within trivially, because the length can go past the current end of the
+            // destination
+            // it also appears to be slower than the byte by byte push
+            let mut start = current_dest_pos - off;
+            while len > 0 {
+                let count = std::cmp::min(dst.len() - start, len);
+                dst.extend_from_within(start..start + count);
+                len -= count;
+                start += count;
+                current_dest_pos += count;
+            }
+            */
             let s = current_dest_pos - off;
 
-            // can't use extend_from_within, because the vector grows with data that will be used
-            //dst.extend_from_within(s..s + len);
             let mut i = 0;
             while i < len {
                 dst.push(dst[s + i]);
                 i += 1;
             }
-
             current_dest_pos += len;
         }
     }

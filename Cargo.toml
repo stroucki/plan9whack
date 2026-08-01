@@ -11,4 +11,5 @@ keywords = ["compression", "plan9", "venti"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev-dependencies]
-base64 = "0.22.1"
+base64 = "0.23.0"
+proptest = "1.11.0"

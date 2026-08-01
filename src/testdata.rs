@@ -1,4 +1,5 @@
 // The ground truth vectors were created with the original C source.
+// Default setting in C source is level 6 for whackinit.
 #[cfg(test)]
 /// generate random data vector to see if compression bails
 pub fn random_data() -> String {

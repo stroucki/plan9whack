@@ -5,6 +5,24 @@
 //! Use the `unwhack` function to decompress, and `whackblock` to compress.
 //! A `whack` function also exists if you want to control some parameters
 //! of compression, or want to collect statistics.
+//!
+//! Internally, whack walks through the input by byte and tries to look up the
+//! presence of a three byte set in a dictionary. If it was not previously
+//! seen, a literal is emitted, where ASCII runs get favorable encoding, but
+//! based on history can switch back to neutral binary encoding.
+//!
+//! If the trigraph was previously seen, depending on the Whack initialization
+//! parameter, additional searches in the dictionary will be made until a
+//! length minimum is satisfied, or there are no more matches. A (length,
+//! offset) pair is emitted, where the length is a variable length encoded
+//! integer between 3 and 2051, derived by a fixed Huffman tree
+//! representation. The offset consists of a bit count, favoring lower
+//! offsets, followed by the bits of the offset with the leading 1 bit
+//! omitted.
+//!
+//! The trigraph at each point is hashed and is the key to a table pointing to
+//! an offset in the history. The previous value at that hash is given to a
+//! next entry keyed by the current dictionary position.
 // Copyright 2024-2026 by Michael Stroucken
 mod constants;
 mod testdata;
@@ -16,13 +34,21 @@ mod tests {
     use base64::Engine;
     use base64::engine::general_purpose;
 
+    use crate::whack::whackinit;
+    #[cfg(test)]
+    use crate::whack::{Stats, Whack};
+
     use self::testdata::*;
 
     use super::*;
 
+    use proptest::prelude::*;
+
     #[cfg(test)]
-    fn compress_decompress(src: &[u8], target: &[u8]) -> Result<(), String> {
-        let rv = whack::whackblock(&src);
+    /// compress src and compare to target, uncompress target and compare to src
+    fn compress_decompress(w: &mut Whack, src: &[u8], target: &[u8]) -> Result<(), String> {
+        let mut stats = Stats::default();
+        let rv = whack::whack(w, &src, &mut stats);
         if rv.is_none() {
             return Err(String::from("did not compress"));
         }
@@ -86,11 +112,12 @@ mod tests {
             .decode(compressed_65k_0bits())
             .unwrap();
 
-        return compress_decompress(&src, &target);
+        let mut w = whackinit(6);
+        compress_decompress(&mut w, &src, &target)
     }
 
     #[test]
-    /// test if compression of a large amount of 0 bits works
+    /// test if compression of a large amount of 1 bits works
     pub fn whack_many1bits() -> Result<(), String> {
         let src = [255u8; 65536].to_vec();
 
@@ -98,11 +125,12 @@ mod tests {
             .decode(compressed_65k_1bits())
             .unwrap();
 
-        compress_decompress(&src, &target)
+        let mut w = whackinit(6);
+        compress_decompress(&mut w, &src, &target)
     }
 
     #[test]
-    /// test if compression of a large amount of 0 bits works
+    /// test if compression of 0..512 works
     pub fn whack_countup() -> Result<(), String> {
         let mut src = Vec::new();
         for n in 0..512 {
@@ -113,7 +141,8 @@ mod tests {
             .decode(compressed_512_countup())
             .unwrap();
 
-        return compress_decompress(&src, &target);
+        let mut w = whackinit(6);
+        compress_decompress(&mut w, &src, &target)
     }
 
     #[test]
@@ -125,7 +154,8 @@ mod tests {
         let target = general_purpose::STANDARD
             .decode(large_compressed_data())
             .unwrap();
-        compress_decompress(&src, &target)
+        let mut w = whackinit(6);
+        compress_decompress(&mut w, &src, &target)
     }
 
     #[test]
@@ -139,7 +169,7 @@ mod tests {
                 // should really be impossible
                 return Err(String::from("result was expanded"));
             }
-            Err(String::from("test data not uncompressible enough"))
+            Err(String::from("test data not incompressible enough"))
         } else {
             Ok(())
         }
@@ -175,6 +205,41 @@ mod tests {
             Ok(())
         } else {
             Err(rv.err().unwrap())
+        }
+    }
+
+    fn test_data() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            // Random (mostly incompressible)
+            proptest::collection::vec(any::<u8>(), 0..10000),
+            // Highly compressible
+            (any::<u8>(), 0usize..10000).prop_map(|(b, len)| vec![b; len]),
+            // Limited alphabet
+            proptest::collection::vec(0u8..4u8, 0..10000),
+            // Repeated patterns
+            (0u8..255u8, 1usize..128, 1usize..100).prop_map(|(byte, pattern_len, repeats)| {
+                vec![byte; pattern_len].repeat(repeats)
+            }),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn roundtrip(data in test_data()) {
+            let compressed = whack::whackblock(&data);
+            if compressed.is_some() {
+                let compressed = compressed.unwrap();
+                let decompressed = unwhack::unwhack(&compressed, data.len()).expect("decompression failed");
+                prop_assert_eq!(&decompressed, &data);
+                /*
+                let dlen = data.len();
+                let clen = compressed.len();
+                let pct = clen*100/dlen;
+                println!("Compressed size: {} Uncompressed size: {} %: {}", compressed.len(), data.len(), pct);
+                */
+                return Ok(());
+            }
+            //println!("data size {} did not compress",data.len());
         }
     }
 }

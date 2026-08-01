@@ -11,15 +11,17 @@ use crate::constants::*;
 pub struct Whack {
     /// beginning dictionary index
     pub begin: u16,
-    /// lookup value from hash to next index
+    /// lookup value from hash to current dictionary entry
     /// index ranges from 0..16384, but values can overflow
-    pub hash: [u16; 16384],
-    pub next: [u16; 16384],
+    pub hash: [u16; 1 << HASH_LOG],
+    /// this is actually the previous dictionary entry for a dictionary entry
+    pub next: [u16; WHACK_MAX_OFF as usize],
     /// maximum length to consider
     pub thwmaxcheck: u32,
 }
 
 /// Collect status from compression
+#[derive(Default)]
 pub struct Stats {
     pub statbytes: usize,
     pub statoutbytes: usize,
@@ -44,7 +46,7 @@ pub fn whackinit(level: u8) -> Whack {
     thwmaxcheck = thwmaxcheck.clamp(2, 1024);
 
     Whack {
-        begin: 2 * WHACK_MAX_OFF, // XXXstroucki why?
+        begin: 2 * WHACK_MAX_OFF, // values out of range are used to indicate invalid dictionary entries
         hash: [0; 16384],
         next: [0; 16384],
         thwmaxcheck,
@@ -88,7 +90,7 @@ fn whackmatch(
         }
         check -= 1;
 
-        candidate_offset = current_dict_position - last_dict_position;
+        candidate_offset = current_dict_position.wrapping_sub(last_dict_position);
         if candidate_offset <= last_candidate_offset || candidate_offset > WHACK_MAX_OFF {
             break;
         }
@@ -119,6 +121,9 @@ fn whackmatch(
             if current_match_position - current_source_position > bestlen {
                 bestlen = current_match_position - current_source_position;
                 bestoff = candidate_offset;
+
+                // it uses thwmaxcheck as the limit to the number of dictionary
+                // checks and the best match length?
                 if bestlen > w.thwmaxcheck as usize {
                     break;
                 }
@@ -171,15 +176,20 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     let mut half: usize;
     let mut current_output_length: usize;
 
-    let mut cont: usize;
+    // these two need to be at least 32 bit
+    let mut cont: usize; // lookahead of the next MIN_MATCH bytes
     let mut pending_output_bits: usize;
+
     let mut current_dict_position: u16;
     let mut lithist: u32;
     let mut pending_output_bits_length: u16;
+
+    // for stats
     let mut lits: usize;
     let mut matches: usize;
-    let mut offbits: u16;
-    let mut lenbits: u16;
+    let mut offbits: usize;
+    let mut lenbits: usize;
+
     let max_source_position = src.len();
     if max_source_position < MIN_MATCH {
         return None;
@@ -191,9 +201,6 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     current_dict_position = w.begin;
     current_source_position = 0;
 
-    cont = (((src[current_source_position] as u32) << 16)
-        | ((src[current_source_position + 1] as u32) << 8)
-        | (src[current_source_position + 2] as u32)) as usize;
     half = max_source_position >> 1;
     pending_output_bits_length = 0;
     pending_output_bits = 0;
@@ -202,6 +209,12 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     offbits = 0;
     lenbits = 0;
     lithist = !(0);
+
+    // read in a match candidate
+    cont = (((src[current_source_position] as u32) << 16)
+        | ((src[current_source_position + 1] as u32) << 8)
+        | (src[current_source_position + 2] as u32)) as usize;
+
     while current_source_position < max_source_position {
         let mut hash = hashit(cont);
         let mut match_len;
@@ -224,7 +237,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
         // flush pending bytes
         while pending_output_bits_length >= 8 {
             if current_output_length >= max_output_length {
-                // fail if output length exceeds source length
+                // fail if output length exceeds or equals source length
                 w.begin = current_dict_position;
                 return None;
             }
@@ -234,7 +247,9 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
             pending_output_bits_length -= 8;
         }
 
+        // act on the dictionary lookup
         if (match_len as usize) < MIN_MATCH {
+            // output literal
             let mut current_byte = src[current_source_position] as u16;
             // append 1 if current byte is ASCII, else 0
             lithist = lithist << 1
@@ -275,7 +290,10 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
              * check for compression progress, bail if none achieved by halfway point
              */
             if current_source_position > half {
+                // while longer runs of ascii literals are directly inserted into the output,
+                // each literal symbol can have up to 3 0 bits prepended
                 if (4 * current_source_position) < (5 * lits) {
+                    // current_source_position < 1.25 lits
                     w.begin = current_dict_position;
                     return None;
                 }
@@ -297,27 +315,72 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
                 match_len = MAXLEN as u16;
                 target_source_position = current_source_position + match_len as usize;
             }
+            // if we are doing (len, off) pair, len is definitely at least MIN_MATCH
             match_len -= MIN_MATCH as u16;
+
             if match_len < MAX_FAST_LEN as u16 {
+                // there is a premade Huffman tree to encode (adjusted) match_len values from 0 to 9
                 let huff = &LENTAB[match_len as usize];
                 let bits = huff.bits;
                 pending_output_bits = pending_output_bits << bits | huff.encode;
                 pending_output_bits_length += bits;
-                lenbits += bits;
+                lenbits += bits as usize;
             } else {
+                // for larger values, we deterministically add to the Huffman tree
+                match_len -= MAX_FAST_LEN as u16;
+                // match_len has now been reduced by 12
                 let mut code = BIG_LEN_CODE as usize;
                 let mut bits = BIG_LEN_BITS as u16;
-                let mut use_0 = BIG_LEN_BASE;
-                match_len -= MAX_FAST_LEN as u16;
-                while match_len as u32 >= use_0 {
-                    match_len -= use_0 as u16;
-                    code = (code + use_0 as usize) << 1;
-                    use_0 <<= bits & 1 ^ 1;
+                let mut step = BIG_LEN_BASE; // largest remainder + 1
+                // we start at 5x1 01 xx
+                // then go to 6x1 00 xx
+                // then go to 6x1 01 xxx
+                // then go to 7x1 00 xxx
+                // then go to 7x1 01 xxxx
+                // then go to 8x1 00 xxxx
+                while match_len as u32 >= step {
+                    match_len -= step as u16;
+                    // the adding of the excess remainder and the left shift cause the 1s
+                    // to aggregate and the branch to switch from 01 to 00
+                    code = (code + step as usize) << 1;
+                    // remainder bit size increases here when number of code bits is even
+                    step <<= bits & 1 ^ 1;
                     bits += 1;
                 }
+                // 5    11100 x x 3x1 00 x
+                // 6    11101 0 x 3x1 01 0
+                // 7    111100 0 x 4x1 00 0
+                // 8    1111010 1 x 4x1 01 1
+                // 10   11111000 1 x 5x1 00 1
+                // working backward above ^^^
+                // 12   111110100 2 0 5x1 01 2;
+                // 15   111110111
+                // 16   1111110000 2 4 6x1 00 2
+                // 19   1111110011
+                // 20   11111101000 3 8 6x1 01 3
+                // 27   11111101111
+                // 28   111111100000 3 16 7x1 00 3
+                // 35   111111100111
+                // 36   1111111010000 4 24 7x1 01 4
+                // 43   1111111010111
+                // 44   1111111011000
+                // 51   1111111011111
+                // 52   11111111000000 4 40 8x1 00 4
+                // 59   11111111000111
+                // 60   11111111001000
+                // 67   11111111001111
+                // 68   111111110100000 5 56 8x1 01 5
+                // 99   111111110111111
+                // 100  1111111110000000 5 88 9x1 00 5
+                // 131  1111111110011111
+                // 132  11111111101000000 6 120 9x1 01 6
+                // 2051 111111111111100111111111 9
+                // 2052 1111111111111010000000000 invalid
                 pending_output_bits = pending_output_bits << bits | (code + match_len as usize);
                 pending_output_bits_length += bits;
-                lenbits += bits;
+                lenbits += bits as usize;
+
+                // flush pending bytes
                 while pending_output_bits_length >= 8 {
                     if current_output_length >= max_output_length {
                         // fail if output length exceeds source length
@@ -333,28 +396,38 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
             /*
              * offset in history
              */
+            // maximum for match_offset is WHACK_MAX_OFF
             match_offset -= 1;
+            // find how many bits match_offset fits into
             let mut bits = MIN_OFF_BITS as u16;
             while match_offset >= (1) << bits {
                 bits += 1;
             }
             if bits < (MAX_OFF_BITS - 1) as u16 {
+                // add 3 bit bit count
                 pending_output_bits =
                     pending_output_bits << 3 | (bits - MIN_OFF_BITS as u16) as usize;
                 if bits != MIN_OFF_BITS as u16 {
                     bits -= 1;
                 }
                 pending_output_bits_length += bits + 3;
-                offbits += bits + 3;
+                offbits += bits as usize + 3;
             } else {
+                // add 4 bit 1110 for 13 bits offset and 1111 for 14 bits offset
                 pending_output_bits =
                     pending_output_bits << 4 | 0xe | (bits - (MAX_OFF_BITS - 1) as u16) as usize;
                 bits -= 1;
                 pending_output_bits_length += bits + 4;
-                offbits += bits + 4;
+                offbits += bits as usize + 4;
             }
+            // unless match_offset fit into 6 bits, number of bits has been reduced by one
+            // 63 would be encoded as RPN 6 << 63 63 & |
+            // 64 would be encoded as RPN 6 << 64 63 & |
+            // normalization because MSB will always be 1
             pending_output_bits =
                 pending_output_bits << bits | (match_offset & (((1) << bits) - 1)) as usize;
+
+            // walk down the match and update indices
             while current_source_position != target_source_position {
                 if current_source_position + MIN_MATCH <= max_source_position {
                     hash = hashit(cont);
@@ -374,9 +447,8 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     stats.statbytes += max_source_position;
     stats.statlits += lits;
     stats.statmatches += matches;
-    stats.statlitbits += current_output_length * 8 + pending_output_bits_length as usize
-        - offbits as usize
-        - lenbits as usize;
+    stats.statlitbits +=
+        current_output_length * 8 + pending_output_bits_length as usize - offbits - lenbits;
     /*
         // XXXstroucki that -2 can cause the value to become negative.
         // Original C source returns overflowed nonsense.
@@ -384,9 +456,10 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
         - offbits as usize
         - lenbits as usize;
         */
-    stats.statoffbits += offbits as usize;
-    stats.statlenbits += lenbits as usize;
+    stats.statoffbits += offbits;
+    stats.statlenbits += lenbits;
 
+    // append 0 bits to finish out a byte
     if pending_output_bits_length & 7 != 0 {
         pending_output_bits <<= 8 - (pending_output_bits_length & 7);
         pending_output_bits_length += 8 - (pending_output_bits_length & 7);
@@ -408,22 +481,12 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
 
 /// Compress a section of data
 ///
-/// Takes data in `src` and outputs a [`Vec<u8>`]
-///
-/// # Errors
+/// Takes data in `src` and returns an [`Option<Vec<u8>>`]
 ///
 /// If source is too small, compressed data is larger than
-/// source or likely to be so
+/// source or likely to be so, the return value is None.
 pub fn whackblock(src: &[u8]) -> Option<Vec<u8>> {
-    let mut stats = Stats {
-        statbytes: 0,
-        statoutbytes: 0,
-        statlits: 0,
-        statmatches: 0,
-        statlitbits: 0,
-        statoffbits: 0,
-        statlenbits: 0,
-    };
+    let mut stats = Stats::default();
     let mut w = whackinit(6);
     whack(&mut w, src, &mut stats)
 }
