@@ -208,6 +208,35 @@ mod tests {
         }
     }
 
+    #[test]
+    /// test match extension that crosses u64 boundaries and both aligned and unaligned cases
+    pub fn whack_word_boundary_match() -> Result<(), String> {
+        // aligned pattern: 8-byte repeated sequence
+        let mut data = Vec::new();
+        for _ in 0..1024 {
+            data.extend_from_slice(b"ABCDEFGH");
+        }
+        let compressed = whack::whackblock(&data).ok_or("did not compress aligned")?;
+        let decompressed = unwhack::unwhack(&compressed, data.len()).map_err(|e| e)?;
+        if decompressed != data {
+            return Err(String::from("decompressed mismatch aligned"));
+        }
+
+        // unaligned pattern: prefix a single byte so matches are unaligned
+        let mut data2 = Vec::new();
+        data2.push(0u8);
+        for _ in 0..1024 {
+            data2.extend_from_slice(b"ABCDEFGH");
+        }
+        let compressed2 = whack::whackblock(&data2).ok_or("did not compress unaligned")?;
+        let decompressed2 = unwhack::unwhack(&compressed2, data2.len()).map_err(|e| e)?;
+        if decompressed2 != data2 {
+            return Err(String::from("decompressed mismatch unaligned"));
+        }
+
+        Ok(())
+    }
+
     fn test_data() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![
             // Random (mostly incompressible)
