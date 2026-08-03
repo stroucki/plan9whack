@@ -14,9 +14,9 @@ pub struct Whack {
     pub begin: u16,
     /// lookup value from hash to current dictionary entry
     /// index ranges from 0..16384, but values can overflow
-    pub hash: [u16; 1 << HASH_LOG],
+    pub hash: Box<[u16; 1 << HASH_LOG]>,
     /// this is actually the previous dictionary entry for a dictionary entry
-    pub next: [u16; WHACK_MAX_OFF as usize],
+    pub next: Box<[u16; WHACK_MAX_OFF as usize]>,
     /// maximum length to consider
     pub thwmaxcheck: u32,
 }
@@ -41,15 +41,15 @@ struct DictLookup {
 /// Create a compressor state object
 pub fn whackinit(level: u8) -> Whack {
     let mut thwmaxcheck;
-    thwmaxcheck = (1) << level;
+    thwmaxcheck = 1 << level;
     thwmaxcheck -= thwmaxcheck >> 2;
     // thwmaxcheck = 0.75 * 2^level
     thwmaxcheck = thwmaxcheck.clamp(2, 1024);
 
     Whack {
         begin: 2 * WHACK_MAX_OFF, // values out of range are used to indicate invalid dictionary entries
-        hash: [0; 16384],
-        next: [0; 16384],
+        hash: Box::new([0; 16384]),
+        next: Box::new([0; 16384]),
         thwmaxcheck,
     }
 }
@@ -102,60 +102,54 @@ fn whackmatch(
          */
 
         candidate_match_position = current_match_position - candidate_offset as usize;
-        if src[current_match_position] == src[candidate_match_position]
-            && src[current_match_position + 1] == src[candidate_match_position + 1]
-            && src[current_match_position + 2] == src[candidate_match_position + 2]
-            && (bestlen == 0
-                || max_match_position - current_match_position > bestlen
-                    && src[current_match_position + bestlen]
-                        == src[candidate_match_position + bestlen])
+
+        // check to see the first three bytes match
+        // and if no match has been found
+        // or a better match can still be made
+        // and bytes match bestlen in (helps performance)
+        // then search for longer matches
+
+        let sslice = &src[current_match_position..max_match_position];
+        let cslice = &src[candidate_match_position..max_match_position - candidate_offset as usize];
+        let max_length = max_match_position - current_match_position;
+        if sslice[0..3] == cslice[0..3]
+            && (bestlen == 0 || max_length > bestlen && sslice[bestlen] == cslice[bestlen])
         {
-            candidate_match_position += 3;
-            current_match_position += 3;
+            let mut match_length = 3;
 
             // Fast extension: compare u64 words where possible for speed, then finish byte-by-byte.
-            while current_match_position + 8 <= max_match_position
-                && candidate_match_position + 8 <= max_match_position
-            {
+            while match_length + 8 <= max_length {
                 let (a, b);
                 // SAFETY: we checked that there are still at least 8 bytes available
                 unsafe {
-                    a = ptr::read_unaligned(src.as_ptr().add(current_match_position) as *const u64);
-                    b = ptr::read_unaligned(
-                        src.as_ptr().add(candidate_match_position) as *const u64
-                    );
+                    a = ptr::read_unaligned(sslice.as_ptr().add(match_length) as *const u64);
+                    b = ptr::read_unaligned(cslice.as_ptr().add(match_length) as *const u64);
                 }
 
-                if a == b {
-                    current_match_position += 8;
-                    candidate_match_position += 8;
-                    continue;
-                }
-
-                // this looks like a small optimization, but resulted in a 10% improvement
-                // with the limited-vocab benchmark
-                let diff = a ^ b;
-                let byte_index = if cfg!(target_endian = "little") {
-                    (diff.trailing_zeros() / 8) as usize
-                } else {
-                    (diff.leading_zeros() / 8) as usize
-                };
-                current_match_position += byte_index;
-                // advance candidate position as well
-                candidate_match_position += byte_index;
-
-                break;
-            }
-
-            while current_match_position < max_match_position {
-                if src[current_match_position] != src[candidate_match_position] {
+                if a != b {
+                    // this looks like a small optimization, but resulted in a 10% improvement
+                    // with the limited-vocab benchmark
+                    let diff = a ^ b;
+                    let byte_index = if cfg!(target_endian = "little") {
+                        (diff.trailing_zeros() / 8) as usize
+                    } else {
+                        (diff.leading_zeros() / 8) as usize
+                    };
+                    match_length += byte_index;
                     break;
                 }
-                candidate_match_position += 1;
-                current_match_position += 1;
+
+                match_length += 8;
             }
-            if current_match_position - current_source_position > bestlen {
-                bestlen = current_match_position - current_source_position;
+
+            while match_length < max_length {
+                if sslice[match_length] != cslice[match_length] {
+                    break;
+                }
+                match_length += 1;
+            }
+            if match_length > bestlen {
+                bestlen = match_length;
                 bestoff = candidate_offset;
 
                 // it uses thwmaxcheck as the limit to the number of dictionary
