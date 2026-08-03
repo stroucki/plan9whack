@@ -139,7 +139,7 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                 return Err(String::from("len out of range"));
             }
 
-            let mut s: usize = current_dest_pos - off;
+            let s: usize = current_dest_pos - off;
             // can't use extend_from_within trivially, because the length can go past the current end of the
             // destination
             // it also appears to be slower than the byte by byte push when operating
@@ -154,21 +154,13 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
                 // as much a win over byte pushing as expected.
                 let fastlen = std::cmp::min(dst.len() - s, len);
                 let mut boost = 0;
-                let start = s;
                 while len > fastlen + boost {
-                    dst.extend_from_within(start..start + fastlen + boost);
-
+                    dst.extend_from_within(s..s + fastlen + boost);
                     len -= fastlen + boost;
                     current_dest_pos += fastlen + boost;
-                    s += fastlen + boost;
                     boost += fastlen + boost;
                 }
-
-                let mut i = 0;
-                while i < len {
-                    dst.push(dst[s + i]);
-                    i += 1;
-                }
+                dst.extend_from_within(s..s+len);
             }
             current_dest_pos += len;
         }
