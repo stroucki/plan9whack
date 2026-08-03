@@ -90,9 +90,6 @@ mod tests {
     #[test]
     /// test if some dictionary compression happens
     pub fn whack_threefoo() -> Result<(), String> {
-        let t1 = b"foo".to_vec();
-        let r1 = whack::whackblock(&t1);
-        println!("r1: {:?}", r1);
         let src = b"foofoofoo".to_vec();
         let rv = whack::whackblock(&src);
         if rv.is_some() {

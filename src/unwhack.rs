@@ -145,17 +145,30 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
             // it also appears to be slower than the byte by byte push when operating
             // in single elements at the end of dst.
 
-            let fastlen = std::cmp::min(dst.len() - s, len);
-            dst.extend_from_within(s..s + fastlen);
+            // off == 1 frequently happens, resize the vector and fill with that character
+            if off == 1 {
+                let byte = dst[s];
+                dst.resize(dst.len() + len, byte);
+            } else {
+                // exponential extending from the offset is beneficial but not
+                // as much a win over byte pushing as expected.
+                let fastlen = std::cmp::min(dst.len() - s, len);
+                let mut boost = 0;
+                let start = s;
+                while len > fastlen + boost {
+                    dst.extend_from_within(start..start + fastlen + boost);
 
-            len -= fastlen;
-            s += fastlen;
-            current_dest_pos += fastlen;
+                    len -= fastlen + boost;
+                    current_dest_pos += fastlen + boost;
+                    s += fastlen + boost;
+                    boost += fastlen + boost;
+                }
 
-            let mut i = 0;
-            while i < len {
-                dst.push(dst[s + i]);
-                i += 1;
+                let mut i = 0;
+                while i < len {
+                    dst.push(dst[s + i]);
+                    i += 1;
+                }
             }
             current_dest_pos += len;
         }
