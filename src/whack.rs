@@ -1,6 +1,5 @@
 // Copyright 2024-2026 by Michael Stroucken
 use crate::constants::*;
-use std::ptr;
 
 /// Compression dictionary
 ///
@@ -119,12 +118,10 @@ fn whackmatch(
 
             // Fast extension: compare u64 words where possible for speed, then finish byte-by-byte.
             while match_length + 8 <= max_length {
-                let (a, b);
-                // SAFETY: we checked that there are still at least 8 bytes available
-                unsafe {
-                    a = ptr::read_unaligned(sslice.as_ptr().add(match_length) as *const u64);
-                    b = ptr::read_unaligned(cslice.as_ptr().add(match_length) as *const u64);
-                }
+                let a =
+                    u64::from_le_bytes(sslice[match_length..match_length + 8].try_into().unwrap());
+                let b =
+                    u64::from_le_bytes(cslice[match_length..match_length + 8].try_into().unwrap());
 
                 if a != b {
                     // this looks like a small optimization, but resulted in a 10% improvement
@@ -185,7 +182,7 @@ fn whackmatch(
 /// hash the bottom 24 bits of `c` into a 14 bit value
 #[inline]
 fn hashit(c: usize) -> u16 {
-    ((((c & 0xffffff) * 0x6b43a9b5) >> (32 - HASH_LOG)) as u32 & HASH_MASK) as u16
+    (((c as u32 & 0xffffff).wrapping_mul(0x6b43a9b5) >> (32 - HASH_LOG)) & HASH_MASK) as u16
 }
 
 /// Compress a section of data
@@ -244,9 +241,9 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     cont = (((src[current_source_position] as u32) << 16)
         | ((src[current_source_position + 1] as u32) << 8)
         | (src[current_source_position + 2] as u32)) as usize;
+    let mut hash = hashit(cont);
 
     while current_source_position < max_source_position {
-        let mut hash = hashit(cont);
         let mut match_len;
         let mut match_offset;
         let wmr = whackmatch(
@@ -329,12 +326,16 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
                 }
                 half = max_source_position;
             }
-            if current_source_position + MIN_MATCH <= max_source_position {
+            if current_source_position + 3 <= max_source_position {
                 w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
                     w.hash[hash as usize];
                 w.hash[hash as usize] = current_dict_position;
-                if current_source_position + MIN_MATCH < max_source_position {
-                    cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
+                if current_source_position + 3 < max_source_position {
+                    let prevcont = cont;
+                    cont = (cont & 0xffff) << 8 | src[current_source_position + 3] as usize;
+                    if prevcont != cont {
+                        hash = hashit(cont);
+                    }
                 }
             }
             current_dict_position = current_dict_position.wrapping_add(1);
@@ -429,6 +430,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
             // maximum for match_offset is WHACK_MAX_OFF
             match_offset -= 1;
             // find how many bits match_offset fits into
+            // counting is faster than std::cmp::max(MIN_OFF_BITS as u16, match_offset.bit_width() as u16);
             let mut bits = MIN_OFF_BITS as u16;
             while match_offset >= (1) << bits {
                 bits += 1;
@@ -459,13 +461,16 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
 
             // walk down the match and update indices
             while current_source_position != target_source_position {
-                if current_source_position + MIN_MATCH <= max_source_position {
-                    hash = hashit(cont);
+                if current_source_position + 3 <= max_source_position {
                     w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
                         w.hash[hash as usize];
                     w.hash[hash as usize] = current_dict_position;
-                    if current_source_position + MIN_MATCH < max_source_position {
-                        cont = cont << 8 | src[current_source_position + MIN_MATCH] as usize;
+                    if current_source_position + 3 < max_source_position {
+                        let prevcont = cont;
+                        cont = (cont & 0xffff) << 8 | src[current_source_position + 3] as usize;
+                        if prevcont != cont {
+                            hash = hashit(cont);
+                        }
                     }
                 }
                 current_dict_position = current_dict_position.wrapping_add(1);

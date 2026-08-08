@@ -4,7 +4,8 @@
 //!
 //! Use the `unwhack` function to decompress, and `whackblock` to compress.
 //! A `whack` function also exists if you want to control some parameters
-//! of compression, or want to collect statistics.
+//! of compression, want to collect statistics, or reuse the compression
+//! dictionary for another set of data.
 //!
 //! Internally, whack walks through the input by byte and tries to look up the
 //! presence of a three byte set in a dictionary. If it was not previously
@@ -127,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    /// test if compression of 0..512 works
+    /// test if compression of 0..255,0..255 works
     pub fn whack_countup() -> Result<(), String> {
         let mut src = Vec::new();
         for n in 0..512 {
