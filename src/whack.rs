@@ -67,23 +67,25 @@ fn whackmatch(
     let mut bestoff: u16;
     let mut bestlen: usize;
     let mut check: u32;
-    let mut current_match_position: usize = current_source_position;
     let mut candidate_match_position: usize;
     let mut last_candidate_offset: u16;
     let mut max_match_position = max_source_position;
 
-    if max_match_position < current_match_position + MIN_MATCH {
+    // return None if too close to the end
+    if max_match_position < current_source_position + MIN_MATCH {
         return None;
     }
 
-    if current_match_position + MAXLEN < max_match_position {
-        max_match_position = current_match_position + MAXLEN;
+    if current_source_position + MAXLEN < max_match_position {
+        max_match_position = current_source_position + MAXLEN;
     }
     bestoff = 0;
     bestlen = 0;
     check = w.thwmaxcheck;
     last_candidate_offset = 0;
     last_dict_position = w.hash[hash as usize];
+    let sslice = &src[current_source_position..max_match_position];
+    let sbegin = (sslice[0] as u32) | ((sslice[1] as u32) << 8) | ((sslice[2] as u32) << 16);
     loop {
         if check == 0 {
             break;
@@ -100,7 +102,7 @@ fn whackmatch(
          * 1) s too close check above
          */
 
-        candidate_match_position = current_match_position - candidate_offset as usize;
+        candidate_match_position = current_source_position - candidate_offset as usize;
 
         // check to see the first three bytes match
         // and if no match has been found
@@ -108,10 +110,10 @@ fn whackmatch(
         // and bytes match bestlen in (helps performance)
         // then search for longer matches
 
-        let sslice = &src[current_match_position..max_match_position];
         let cslice = &src[candidate_match_position..max_match_position - candidate_offset as usize];
-        let max_length = max_match_position - current_match_position;
-        if sslice[0..3] == cslice[0..3]
+        let max_length = max_match_position - current_source_position;
+        let cbegin = (cslice[0] as u32) | ((cslice[1] as u32) << 8) | ((cslice[2] as u32) << 16);
+        if sbegin == cbegin
             && (bestlen == 0 || max_length > bestlen && sslice[bestlen] == cslice[bestlen])
         {
             let mut match_length = 3;
@@ -145,6 +147,7 @@ fn whackmatch(
                 }
                 match_length += 1;
             }
+
             if match_length > bestlen {
                 bestlen = match_length;
                 bestoff = candidate_offset;
@@ -156,7 +159,6 @@ fn whackmatch(
                 }
             }
         }
-        current_match_position = current_source_position;
         last_candidate_offset = candidate_offset;
         last_dict_position = w.next[(last_dict_position & (WHACK_MAX_OFF - 1)) as usize];
     }
