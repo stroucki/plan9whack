@@ -217,18 +217,18 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
     let mut offbits: usize;
     let mut lenbits: usize;
 
-    let max_source_position = src.len();
-    if max_source_position < MIN_MATCH {
+    let source_length = src.len();
+    if source_length < MIN_MATCH {
         return None;
     }
 
-    let mut dst = Vec::with_capacity(max_source_position);
+    let mut dst = Vec::with_capacity(source_length);
     current_output_length = 0;
-    let max_output_length: usize = max_source_position;
+    let max_output_length: usize = source_length;
     current_dict_position = w.begin;
     current_source_position = 0;
 
-    half = max_source_position >> 1;
+    half = source_length >> 1;
     pending_output_bits_length = 0;
     pending_output_bits = 0;
     lits = 0;
@@ -243,14 +243,14 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
         | (src[current_source_position + 2] as u32)) as usize;
     let mut hash = hashit(cont);
 
-    while current_source_position < max_source_position {
+    while current_source_position < source_length {
         let mut match_len;
         let mut match_offset;
         let wmr = whackmatch(
             w,
             src,
             current_source_position,
-            max_source_position,
+            source_length,
             hash,
             current_dict_position,
         );
@@ -324,13 +324,14 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
                     w.begin = current_dict_position;
                     return None;
                 }
-                half = max_source_position;
+                half = source_length;
             }
-            if current_source_position + 3 <= max_source_position {
+            if current_source_position + 3 <= source_length {
                 w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
                     w.hash[hash as usize];
                 w.hash[hash as usize] = current_dict_position;
-                if current_source_position + 3 < max_source_position {
+                if current_source_position + 3 < source_length {
+                    // not equal
                     let prevcont = cont;
                     cont = (cont & 0xffff) << 8 | src[current_source_position + 3] as usize;
                     if prevcont != cont {
@@ -461,11 +462,12 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
 
             // walk down the match and update indices
             while current_source_position != target_source_position {
-                if current_source_position + 3 <= max_source_position {
+                if current_source_position + 3 <= source_length {
                     w.next[(current_dict_position & (WHACK_MAX_OFF - 1)) as usize] =
                         w.hash[hash as usize];
                     w.hash[hash as usize] = current_dict_position;
-                    if current_source_position + 3 < max_source_position {
+                    if current_source_position + 3 < source_length {
+                        // not equal
                         let prevcont = cont;
                         cont = (cont & 0xffff) << 8 | src[current_source_position + 3] as usize;
                         if prevcont != cont {
@@ -479,7 +481,7 @@ pub fn whack(w: &mut Whack, src: &[u8], stats: &mut Stats) -> Option<Vec<u8>> {
         }
     }
     w.begin = current_dict_position;
-    stats.statbytes += max_source_position;
+    stats.statbytes += source_length;
     stats.statlits += lits;
     stats.statmatches += matches;
     stats.statlitbits +=
