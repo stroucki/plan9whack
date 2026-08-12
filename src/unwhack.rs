@@ -148,19 +148,21 @@ pub fn unwhack(src: &[u8], ndst: usize) -> Result<Vec<u8>, String> {
             // off == 1 frequently happens, resize the vector and fill with that character
             if off == 1 {
                 let byte = dst[s];
-                dst.resize(dst.len() + len, byte);
+                dst.resize(current_dest_pos + len, byte);
             } else {
                 // exponential extending from the offset is beneficial but not
                 // as much a win over byte pushing as expected.
-                let fastlen = std::cmp::min(dst.len() - s, len);
+                // Pre-allocate the full target size
+                dst.resize(current_dest_pos + len, 0);
+                let fastlen = std::cmp::min(current_dest_pos - s, len);
                 let mut boost = 0;
-                while len > fastlen + boost {
-                    dst.extend_from_within(s..s + fastlen + boost);
+                while len >= fastlen + boost {
+                    dst.copy_within(s..s + fastlen + boost, current_dest_pos);
                     len -= fastlen + boost;
                     current_dest_pos += fastlen + boost;
                     boost += fastlen + boost;
                 }
-                dst.extend_from_within(s..s+len);
+                dst.copy_within(s..s + len, current_dest_pos);
             }
             current_dest_pos += len;
         }
